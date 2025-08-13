@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-mini-green.svg)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o--mini-green.svg)
 
 ## 기능
 
