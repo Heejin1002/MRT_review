@@ -69,7 +69,7 @@ export MYREALTRIP_PASSWORD="your-password"
 ## 주요 특징
 
 - ✅ **자동 리뷰 수집**: 마이리얼트립 API를 통한 실시간 리뷰 수집
-- ✅ **GPT 답변 생성**: OpenAI GPT-3.5-turbo를 활용한 개인화된 답변
+- ✅ **GPT 답변 생성**: OpenAI gpt-4o-mini를 활용한 개인화된 답변
 - ✅ **원클릭 복사**: JavaScript 기반 클립보드 자동 복사
 - ✅ **사용자 정의 프롬프트**: 답변 스타일 커스터마이징 가능
 - ✅ **필터링**: 파트너별, 점수별 리뷰 필터링
@@ -104,3 +104,4 @@ export MYREALTRIP_PASSWORD="your-password"
 ## 라이선스
 
 이 프로젝트는 개인 사용을 위한 것입니다.
+
