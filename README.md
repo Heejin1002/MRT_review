@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![Streamlit](https://img.shields.io/badge/streamlit-1.28+-red.svg)
-![OpenAI](https://img.shields.io/badge/OpenAI-GPT--3.5--turbo-green.svg)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-mini-green.svg)
 
 ## 기능
 
@@ -90,7 +90,7 @@ export MYREALTRIP_PASSWORD="your-password"
 
 - **Frontend**: Streamlit
 - **Backend**: Python 3.8+
-- **AI**: OpenAI GPT-3.5-turbo
+- **AI**: OpenAI GPT-4o-mini
 - **API**: MyRealTrip Partner API
 - **Deployment**: Streamlit Community Cloud
 
@@ -104,4 +104,5 @@ export MYREALTRIP_PASSWORD="your-password"
 ## 라이선스
 
 이 프로젝트는 개인 사용을 위한 것입니다.
+
 
