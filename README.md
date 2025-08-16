@@ -15,6 +15,33 @@
 - 파트너별, 점수별 필터링
 - 원클릭 답변 복사
 
+## 🚀 빠른 시작
+
+### 1. 저장소 클론
+```bash
+git clone <your-repository-url>
+cd MRT_review
+```
+
+### 2. 환경변수 설정
+```bash
+# .env 파일 생성
+echo "MYREALTRIP_EMAIL=your_email@example.com" > .env
+echo "MYREALTRIP_PASSWORD=your_password" >> .env
+echo "OPENAI_API_KEY=your_openai_api_key" >> .env
+```
+
+### 3. 의존성 설치 및 실행
+```bash
+pip install -r requirements.txt
+streamlit run gpt_response_dashboard.py
+```
+
+### 4. 브라우저에서 확인
+- `http://localhost:8501`에서 앱 확인
+- 사이드바에서 "📊 데이터 가져오기" 클릭
+- 생성된 GPT 답변 확인 및 복사
+
 ## 배포 방법
 
 ### Streamlit Community Cloud
@@ -28,10 +55,44 @@
 
 ### 로컬 실행
 
-```bash
-pip install -r requirements.txt
-streamlit run gpt_response_dashboard.py
-```
+1. **환경변수 설정**
+
+   **방법 1: .env 파일 생성 (권장)**
+   ```bash
+   # 프로젝트 루트에 .env 파일 생성
+   touch .env
+   ```
+   
+   `.env` 파일에 다음 내용 추가:
+   ```
+   MYREALTRIP_EMAIL=your_actual_email@example.com
+   MYREALTRIP_PASSWORD=your_actual_password
+   OPENAI_API_KEY=your_actual_openai_api_key
+   ```
+   
+   **방법 2: 시스템 환경변수 설정**
+   ```bash
+   # Windows (CMD)
+   set OPENAI_API_KEY=your_actual_openai_api_key
+   set MYREALTRIP_EMAIL=your_actual_email@example.com
+   set MYREALTRIP_PASSWORD=your_actual_password
+   
+   # Windows (PowerShell)
+   $env:OPENAI_API_KEY="your_actual_openai_api_key"
+   $env:MYREALTRIP_EMAIL="your_actual_email@example.com"
+   $env:MYREALTRIP_PASSWORD="your_actual_password"
+   
+   # macOS/Linux
+   export OPENAI_API_KEY="your_actual_openai_api_key"
+   export MYREALTRIP_EMAIL="your_actual_email@example.com"
+   export MYREALTRIP_PASSWORD="your_actual_password"
+   ```
+
+2. **의존성 설치 및 실행**
+   ```bash
+   pip install -r requirements.txt
+   streamlit run gpt_response_dashboard.py
+   ```
 
 ## 사용법
 
@@ -50,6 +111,14 @@ streamlit run gpt_response_dashboard.py
 
 ## 환경변수 설정
 
+### 필수 환경변수
+
+| 변수명 | 설명 | 예시 |
+|--------|------|------|
+| `OPENAI_API_KEY` | OpenAI API 키 | `sk-...` |
+| `MYREALTRIP_EMAIL` | 마이리얼트립 파트너 계정 이메일 | `partner@example.com` |
+| `MYREALTRIP_PASSWORD` | 마이리얼트립 파트너 계정 비밀번호 | `your_password` |
+
 ### Streamlit Community Cloud
 배포 시 **Advanced settings** → **Secrets**에서 설정:
 ```
@@ -59,12 +128,38 @@ MYREALTRIP_PASSWORD = "your-password"
 ```
 
 ### 로컬 개발
-`.env` 파일 생성하거나 시스템 환경변수로 설정:
-```bash
-export OPENAI_API_KEY="your-openai-api-key"
-export MYREALTRIP_EMAIL="your-email@example.com"
-export MYREALTRIP_PASSWORD="your-password"
+
+**방법 1: .env 파일 생성 (권장)**
+1. 프로젝트 루트에 `.env` 파일 생성
+2. 다음 내용 추가:
 ```
+MYREALTRIP_EMAIL=your_actual_email@example.com
+MYREALTRIP_PASSWORD=your_actual_password
+OPENAI_API_KEY=your_actual_openai_api_key
+```
+
+**방법 2: 시스템 환경변수 설정**
+```bash
+# Windows (CMD)
+set OPENAI_API_KEY=your_actual_openai_api_key
+set MYREALTRIP_EMAIL=your_actual_email@example.com
+set MYREALTRIP_PASSWORD=your_actual_password
+
+# Windows (PowerShell)
+$env:OPENAI_API_KEY="your_actual_openai_api_key"
+$env:MYREALTRIP_EMAIL="your_actual_email@example.com"
+$env:MYREALTRIP_PASSWORD="your_actual_password"
+
+# macOS/Linux
+export OPENAI_API_KEY="your_actual_openai_api_key"
+export MYREALTRIP_EMAIL="your_actual_email@example.com"
+export MYREALTRIP_PASSWORD="your_actual_password"
+```
+
+### 보안 주의사항
+- `.env` 파일은 `.gitignore`에 포함되어 Git에 업로드되지 않습니다
+- 실제 API 키와 계정 정보는 절대 GitHub에 커밋하지 마세요
+- 환경변수 설정 후 터미널을 재시작해야 할 수 있습니다
 
 ## 주요 특징
 
@@ -100,6 +195,37 @@ export MYREALTRIP_PASSWORD="your-password"
 - OpenAI API 키가 필요합니다.
 - API 사용량에 따라 요금이 부과될 수 있습니다.
 - 브라우저에서 JavaScript가 활성화되어 있어야 복사 기능이 작동합니다.
+
+## 🔧 문제 해결
+
+### 환경변수가 인식되지 않는 경우
+```bash
+# 터미널 재시작 후 다시 시도
+# 또는 환경변수 확인
+echo $OPENAI_API_KEY  # macOS/Linux
+echo %OPENAI_API_KEY% # Windows CMD
+echo $env:OPENAI_API_KEY # Windows PowerShell
+```
+
+### OpenAI API 오류
+- API 키가 올바른지 확인
+- API 사용량 한도 확인
+- 네트워크 연결 상태 확인
+
+### 마이리얼트립 로그인 오류
+- 계정 정보가 올바른지 확인
+- 계정이 파트너 권한을 가지고 있는지 확인
+- 계정이 활성화되어 있는지 확인
+
+### Streamlit 실행 오류
+```bash
+# 의존성 재설치
+pip uninstall -r requirements.txt
+pip install -r requirements.txt
+
+# Streamlit 캐시 클리어
+streamlit cache clear
+```
 
 ## 라이선스
 
