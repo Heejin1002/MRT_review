@@ -290,34 +290,55 @@ class TokenManager:
             return None
 
 class ReviewsCollector:
-    def get_reviews(self, token, partner_id, score):
-        """특정 점수의 미답변 리뷰 조회"""
+    def get_reviews(self, token, partner_id, score, page_size=100):
+        """특정 점수의 미답변 리뷰 조회 (한 페이지)"""
         headers = {"partner-access-token": token}
-        
         payload = {
             "page": 1,
-            "pageSize": 50,
+            "pageSize": page_size,
             "productType": "TOURACTIVITY",
             "sort": "-createdAt",
             "partnerCommented": False,
             "score": score
         }
-        
         res = requests.post(REVIEWS_URL, headers=headers, json=payload)
         if res.status_code == 200:
+            return res.json().get("data", [])
+        return []
+
+    def get_all_reviews(self, token, partner_id, score, page_size=100):
+        """특정 점수의 미답변 리뷰 전부 조회 (페이지네이션으로 모두 수집)"""
+        all_data = []
+        page = 1
+        while True:
+            headers = {"partner-access-token": token}
+            payload = {
+                "page": page,
+                "pageSize": page_size,
+                "productType": "TOURACTIVITY",
+                "sort": "-createdAt",
+                "partnerCommented": False,
+                "score": score
+            }
+            res = requests.post(REVIEWS_URL, headers=headers, json=payload)
+            if res.status_code != 200:
+                break
             data = res.json().get("data", [])
-            return data
-        else:
-            return []
+            if not data:
+                break
+            all_data.extend(data)
+            if len(data) < page_size:
+                break
+            page += 1
+        return all_data
     
-    def get_reviews_parallel(self, token, partner_id, scores=[4, 5]):
-        """병렬로 여러 점수의 리뷰 조회"""
+    def get_reviews_parallel(self, token, partner_id, scores=[3, 4, 5]):
+        """병렬로 여러 점수의 리뷰 전부 조회 (페이지네이션 포함)"""
         with ThreadPoolExecutor(max_workers=len(scores)) as executor:
             futures = {
-                executor.submit(self.get_reviews, token, partner_id, score): score 
+                executor.submit(self.get_all_reviews, token, partner_id, score): score
                 for score in scores
             }
-            
             all_reviews = []
             for future in as_completed(futures):
                 score = futures[future]
@@ -327,7 +348,6 @@ class ReviewsCollector:
                         all_reviews.extend(reviews)
                 except Exception as e:
                     print(f"  ⚠️ {score}점 리뷰 조회 실패: {e}")
-            
             return all_reviews
 
 class GPTResponseGenerator:
@@ -487,7 +507,7 @@ def collect_reviews_data(custom_prompt=None, account_email=None, account_passwor
         else:
             print(f"  ✅ 파트너별 토큰 발급 성공")
         
-        # 병렬로 4,5점 리뷰 조회
+        # 병렬로 3,4,5점 리뷰 조회
         reviews = rc.get_reviews_parallel(partner_token, p["id"])
         
         if reviews:
@@ -590,10 +610,12 @@ st.markdown("""
 .gpt-response {
     background-color: #e8f5e8;
     border-left: 4px solid #4CAF50;
-    padding: 12px;
+    padding: 12px 12px 12px 0;
     margin: 8px 0;
     border-radius: 4px;
+    text-align: left;
 }
+.gpt-response .gpt-answer-body { margin-top: 12px; }
 
 </style>
 
@@ -725,7 +747,7 @@ selected_partners = st.sidebar.multiselect(
 st.sidebar.subheader("⭐ 점수 선택")
 selected_scores = st.sidebar.multiselect(
     "점수 선택",
-    options=[4, 5],
+    options=[3, 4, 5],
     default=[5]
 )
 
@@ -806,7 +828,8 @@ if 'review_df' in st.session_state and not st.session_state.review_df.empty:
                     <p><strong>예약번호:</strong> {row.get('예약번호', 'N/A')} | <strong>여행일:</strong> {row.get('여행일', 'N/A')} | <strong>작성일:</strong> {row.get('작성일', 'N/A')}</p>
                     <p><strong>후기내용:</strong> {row.get('후기내용', 'N/A')}</p>
                     <div class="gpt-response" style="white-space: pre-wrap; text-indent: 0;">
-                        <strong>🤖 GPT 답변:</strong><br>{gpt_answer_display}
+                        <strong>🤖 GPT 답변:</strong>
+                        <div class="gpt-answer-body">{gpt_answer_display}</div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -931,7 +954,7 @@ else:
         st.markdown("""
         **2단계: 필터 설정**
         - 파트너 선택 (토토부킹/몽키트래블)
-        - 점수 선택 (4점/5점)
+        - 점수 선택 (3점/4점/5점)
         """)
     
     with col2:
