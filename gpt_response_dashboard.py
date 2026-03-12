@@ -665,8 +665,8 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🏢 파트너 선택")
 selected_partners = st.sidebar.multiselect(
     "파트너 선택",
-    options=["토토부킹", "몽키트래블"],
-    default=["몽키트래블"]
+    options=["토토부킹", "몽키트래블", "몽키트래블 태국"],
+    default=["몽키트래블 태국"]
 )
 
 # 점수 필터
