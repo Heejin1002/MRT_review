@@ -11,14 +11,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 # 환경변수 로드
-import os
 from dotenv import load_dotenv
-
-# .env 파일 로드 (로컬 개발용)
 load_dotenv()
 
-# OpenAI API 키 설정 (환경변수에서 가져오기)
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Streamlit Secrets 우선, 없으면 환경변수 fallback
+def get_secret(key, default=""):
+    try:
+        return st.secrets[key]
+    except:
+        return os.getenv(key, default)
+
+# OpenAI API 키 설정
+openai.api_key = get_secret("OPENAI_API_KEY")
+
+# 기본 계정 정보
+DEFAULT_EMAIL = get_secret("MYREALTRIP_EMAIL")
+DEFAULT_PASSWORD = get_secret("MYREALTRIP_PASSWORD")
 
 # 기본 프롬프트 템플릿 (전역 상수)
 DEFAULT_PROMPT_TEMPLATE = """역할: 당신은 여행사 몽키트래블 직원입니다. 리뷰에 대한 답변을 작성하며, 리뷰어의 감정·표현·세부사항을 그대로 반영하여 정직하고 공감되는 어조로 짧고 간결하게 답변을 남깁니다.
@@ -148,166 +156,101 @@ DEFAULT_PROMPT_TEMPLATE = """역할: 당신은 여행사 몽키트래블 직원�
 
 답변:"""
 
-# API 키 유효성 검증
+
+# ──────────────────────────────────────────
+# 유틸 함수
+# ──────────────────────────────────────────
+
 def validate_api_key():
-    """API 키 유효성 검증"""
     try:
         client = openai.OpenAI(api_key=openai.api_key)
-        response = client.chat.completions.create(
+        client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": "테스트"}],
             max_tokens=5
         )
         return True
-    except Exception as e:
-        # API 키 검증 실패 - UI에서 처리됨
+    except:
         return False
 
+
 def clean_text(text):
-    """이모지와 특수 문자 제거 (더 보수적으로)"""
     if not text:
         return text
-    
-    # 기본적인 공백 정리
     text = text.strip()
-    
-    # 이모지만 제거 (더 제한적으로)
     emoji_pattern = re.compile("["
-        u"\U0001F600-\U0001F64F"  # emoticons
-        u"\U0001F300-\U0001F5FF"  # symbols & pictographs
-        u"\U0001F680-\U0001F6FF"  # transport & map symbols
-        u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        u"\U0001F600-\U0001F64F"
+        u"\U0001F300-\U0001F5FF"
+        u"\U0001F680-\U0001F6FF"
+        u"\U0001F1E0-\U0001F1FF"
         "]+", flags=re.UNICODE)
-    
     cleaned = emoji_pattern.sub(r'', text)
-    
-    # 너무 짧아지면 원본 반환
     if len(cleaned.strip()) < 10:
         return text
-    
     return cleaned
 
-# 기본 계정 정보 (환경변수에서 가져오기)
-DEFAULT_EMAIL = os.getenv("MYREALTRIP_EMAIL", "")
-DEFAULT_PASSWORD = os.getenv("MYREALTRIP_PASSWORD", "")
+
+# ──────────────────────────────────────────
+# API 상수
+# ──────────────────────────────────────────
 
 LOGIN_URL = "https://partner.myrealtrip.com/signin"
 BASE_URL = "https://api3-backoffice.myrealtrip.com"
 AVAILABLE_PARTNERS_URL = f"{BASE_URL}/partner/v1/sign-in/available-partners"
 REVIEWS_URL = f"{BASE_URL}/review/partner/reviews/search"
 
+
+# ──────────────────────────────────────────
+# 클래스
+# ──────────────────────────────────────────
+
 class TokenManager:
     def __init__(self):
-        self.base_token = None  # 기본 토큰 저장
-        self.partner_info = None  # 파트너 정보 저장
-    
+        self.base_token = None
+
     def get_login_token(self, email, password):
-        """직접 로그인 API 호출로 토큰 발급"""
         try:
-            # 로그인 API 호출
-            login_url = "https://api3-backoffice.myrealtrip.com/partner/v1/sign-in"
-            login_data = {
-                "email": email,
-                "password": password
-            }
-            
-            response = requests.post(login_url, json=login_data)
-            
-            if response.status_code == 200:
-                data = response.json()
-                token = data.get("data", {}).get("accessToken")
+            res = requests.post(
+                f"{BASE_URL}/partner/v1/sign-in",
+                json={"email": email, "password": password}
+            )
+            if res.status_code == 200:
+                token = res.json().get("data", {}).get("accessToken")
                 if token:
                     self.base_token = token
                     return token
-                else:
-                    return None
-            else:
-                return None
-                
-        except Exception as e:
-            return None
-
-    def decode_token(self, token):
-        """JWT 토큰에서 partnerId와 partnerAccountId 추출"""
-        try:
-            # JWT 토큰의 두 번째 부분(페이로드) 디코딩
-            parts = token.split('.')
-            if len(parts) >= 2:
-                payload = parts[1]
-                # 패딩 추가
-                payload += '=' * (4 - len(payload) % 4)
-                decoded = base64.b64decode(payload)
-                data = json.loads(decoded)
-                return {
-                    'partnerId': data.get('partnerId'),
-                    'partnerAccountId': data.get('partnerAccountId')
-                }
-        except Exception as e:
+        except:
             pass
         return None
 
     def get_available_partners(self, token):
-        """로그인 토큰으로 사용 가능한 파트너 목록 조회"""
         headers = {"partner-access-token": token}
         res = requests.get(AVAILABLE_PARTNERS_URL, headers=headers)
         if res.status_code == 200:
-            partners = res.json().get("data", [])
             return [
                 {
                     "id": p["partnerId"],
                     "name": p["partnerNickname"],
                     "partnerAccountId": p.get("partnerAccountId")
                 }
-                for p in partners
+                for p in res.json().get("data", [])
             ]
-        else:
-            return []
+        return []
 
     def switch_partner_token(self, base_token, partner_id, partner_account_id=None):
-        """기본 토큰으로 partnerId 전환 후 새 토큰 발급"""
         headers = {"partner-access-token": base_token}
-        url = f"{BASE_URL}/partner/v1/sign-in/{partner_id}"
-
         payload = {"partnerId": partner_id}
         if partner_account_id:
             payload["partnerAccountId"] = partner_account_id
-
-        res = requests.post(url, headers=headers, json=payload)
-
+        res = requests.post(f"{BASE_URL}/partner/v1/sign-in/{partner_id}", headers=headers, json=payload)
         if res.status_code == 200:
-            try:
-                response_data = res.json()
-                data = response_data.get("data", {}) if response_data else {}
-            except Exception as e:
-                data = {}
-            
-            new_token = data.get("accessToken") or data.get("token")
-            if new_token:
-                return new_token
-            else:
-                return None
-        else:
-            return None
+            data = res.json().get("data", {}) or {}
+            return data.get("accessToken") or data.get("token")
+        return None
+
 
 class ReviewsCollector:
-    def get_reviews(self, token, partner_id, score, page_size=100):
-        """특정 점수의 미답변 리뷰 조회 (한 페이지)"""
-        headers = {"partner-access-token": token}
-        payload = {
-            "page": 1,
-            "pageSize": page_size,
-            "productType": "TOURACTIVITY",
-            "sort": "-createdAt",
-            "partnerCommented": False,
-            "score": score
-        }
-        res = requests.post(REVIEWS_URL, headers=headers, json=payload)
-        if res.status_code == 200:
-            return res.json().get("data", [])
-        return []
-
     def get_all_reviews(self, token, partner_id, score, page_size=100):
-        """특정 점수의 미답변 리뷰 전부 조회 (페이지네이션으로 모두 수집)"""
         all_data = []
         page = 1
         while True:
@@ -331,9 +274,8 @@ class ReviewsCollector:
                 break
             page += 1
         return all_data
-    
+
     def get_reviews_parallel(self, token, partner_id, scores=[3, 4, 5]):
-        """병렬로 여러 점수의 리뷰 전부 조회 (페이지네이션 포함)"""
         with ThreadPoolExecutor(max_workers=len(scores)) as executor:
             futures = {
                 executor.submit(self.get_all_reviews, token, partner_id, score): score
@@ -341,57 +283,45 @@ class ReviewsCollector:
             }
             all_reviews = []
             for future in as_completed(futures):
-                score = futures[future]
                 try:
                     reviews = future.result()
                     if reviews:
                         all_reviews.extend(reviews)
-                except Exception as e:
-                    print(f"  ⚠️ {score}점 리뷰 조회 실패: {e}")
+                except:
+                    pass
             return all_reviews
+
 
 class GPTResponseGenerator:
     def __init__(self, prompt_template=None):
-        # 사용자 정의 프롬프트가 있으면 사용, 없으면 기본 프롬프트 사용
         self.prompt_template = prompt_template if prompt_template else DEFAULT_PROMPT_TEMPLATE
 
     def generate_response(self, product_title, review_content):
-        """GPT를 사용하여 리뷰 답변 생성"""
         try:
-            # 텍스트 정리
             clean_product_title = clean_text(product_title)
             clean_review_content = clean_text(review_content)
-            
-            # 텍스트가 너무 짧으면 원본 사용
             if len(clean_product_title.strip()) < 5:
                 clean_product_title = product_title
             if len(clean_review_content.strip()) < 10:
                 clean_review_content = review_content
-            
+
             prompt = self.prompt_template.format(
                 product_title=clean_product_title,
                 review_content=clean_review_content
             )
-            
-        
             client = openai.OpenAI(api_key=openai.api_key)
             response = client.chat.completions.create(
-                model="gpt-4o-mini", 
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "당신은 여행사 몽키트래블의 고객 서비스 담당자입니다. 모든 답변은 구어체에 가깝고 자연스러운 한국어로 작성하며, '-했답니다' 같은 어색한 표현은 사용하지 않습니다. 고객 리뷰 문장을 그대로 인용하지 말고, 리뷰에 나온 내용을 하나하나 나열하지 말 것. 전체 느낌만 담아 한두 문장이 흐르도록 짧게 답하세요."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=300,  # 토큰 수 줄여서 속도 향상
+                max_tokens=200,
                 temperature=0.7,
-                timeout=30  # 타임아웃 설정
+                timeout=30
             )
-            
-            result = response.choices[0].message.content.strip()
-            return result
-            
+            return response.choices[0].message.content.strip()
         except Exception as e:
-            print(f"GPT API 호출 실패: {str(e)}")
-            # 더 구체적인 기본 답변 생성
             if "가이드" in review_content or "선생님" in review_content:
                 return "안녕하세요, 몽키트래블입니다 :) 가이드님과 함께 즐거운 시간 보내셨다니 정말 기쁩니다! 소중한 후기 감사합니다!"
             elif "좋" in review_content or "만족" in review_content:
@@ -399,272 +329,109 @@ class GPTResponseGenerator:
             else:
                 return "안녕하세요, 몽키트래블입니다 :) 소중한 후기 감사합니다!"
 
-def extract_review_data(review, gpt_generator):
-    """리뷰 데이터에서 필요한 정보 추출 및 GPT 답변 생성"""
-    # 기본 데이터 추출
-    review_data = {
-        "id": review.get("id"),
-        "productTitle": review.get("productTitle", "상품명 없음"),
-        "comment": review.get("comment", "후기 내용 없음"),
-        "score": review.get("score", 0),
-        "reservationNo": review.get("reservationNo", "예약번호 없음"),
-        "username": review.get("username", "익명"),
-        "travelStartDate": review.get("travelStartDate", "날짜 정보 없음"),
-        "createdAt": review.get("createdAt", "작성일 없음")
-    }
-    
-    # GPT 답변 생성
-    gpt_response = gpt_generator.generate_response(
-        review_data["productTitle"],
-        review_data["comment"]
-    )
-    review_data["gptResponse"] = gpt_response
-    
-    return review_data
 
-def process_reviews_parallel(reviews, gpt_generator, partner_name):
-    """병렬로 리뷰 데이터 처리"""
-    # 리뷰 ID 기준으로 중복 제거
-    unique_reviews = {}
-    for review in reviews:
-        review_id = review.get('id')
-        if review_id and review_id not in unique_reviews:
-            unique_reviews[review_id] = review
-    
-    reviews = list(unique_reviews.values())
-    print(f"  🔍 중복 제거: {len(reviews)}개 리뷰로 처리")
-    
-    with ThreadPoolExecutor(max_workers=min(10, len(reviews))) as executor:
-        futures = [
-            executor.submit(extract_review_data, review, gpt_generator) 
-            for review in reviews
-        ]
-        
-        processed_reviews = []
-        for future in as_completed(futures):
-            try:
-                review_data = future.result()
-                review_data['partner'] = partner_name
-                processed_reviews.append(review_data)
-            except Exception as e:
-                print(f"  ⚠️ 리뷰 처리 실패: {e}")
-        
-        return processed_reviews
+# ──────────────────────────────────────────
+# 리뷰 수집 (GPT 없이 raw 데이터만)
+# ──────────────────────────────────────────
 
-def collect_reviews_data(custom_prompt=None, account_email=None, account_password=None):
-    """리뷰 데이터 수집 및 GPT 답변 생성"""
+def collect_raw_reviews(account_email, account_password):
     tm = TokenManager()
     rc = ReviewsCollector()
-    
-    gpt_gen = GPTResponseGenerator(prompt_template=custom_prompt)
 
-    # API 키 검증
-    if not validate_api_key():
-        pass  # 에러는 UI에서 처리됨
-    
-    # 계정 정보 확인
-    if not account_email or not account_password:
-        return []
-    
-    # 로그인 토큰 발급
     token = tm.get_login_token(account_email, account_password)
     if not token:
         return []
 
-    # 사용 가능한 파트너 목록 조회
     partners = tm.get_available_partners(token)
     if not partners:
         return []
 
-    # 중복 제거: 파트너 이름 기준으로 중복 제거 (한 번만 실행)
+    # 파트너 중복 제거
     unique_partners = []
     seen_names = set()
-    
     for p in partners:
-        partner_name = p['name']
-        if partner_name not in seen_names:
+        if p['name'] not in seen_names:
             unique_partners.append(p)
-            seen_names.add(partner_name)
-        else:
-            print(f"  ⚠️ 중복 파트너 제거: {partner_name} (ID: {p['id']})")
-    
-    # 파트너 정보 로그 (한 번만 출력)
-    print(f"🔍 발견된 파트너 수: {len(partners)} (중복 제거 후: {len(unique_partners)})")
-    for p in unique_partners:
-        print(f"  - ID: {p['id']}, 이름: {p['name']}, 계정ID: {p.get('partnerAccountId', 'N/A')}")
+            seen_names.add(p['name'])
+
+    def collect_partner(p):
+        partner_token = tm.switch_partner_token(token, p["id"], p.get("partnerAccountId")) or token
+        reviews = rc.get_reviews_parallel(partner_token, p["id"])
+        for r in reviews:
+            r['partner'] = p['name']
+        return reviews
 
     all_reviews = []
-
-    # 병렬로 파트너별 리뷰 수집
-    def collect_partner_reviews(p):
-        print(f"📊 파트너 '{p['name']}' (ID: {p['id']}) 리뷰 수집 시작...")
-        
-        # 파트너별 토큰 발급
-        partner_token = tm.switch_partner_token(token, p["id"], p.get("partnerAccountId"))
-        if not partner_token:
-            partner_token = token
-            print(f"  ⚠️ 파트너별 토큰 발급 실패, 기본 토큰 사용")
-        else:
-            print(f"  ✅ 파트너별 토큰 발급 성공")
-        
-        # 병렬로 3,4,5점 리뷰 조회
-        reviews = rc.get_reviews_parallel(partner_token, p["id"])
-        
-        if reviews:
-            print(f"  📝 총 {len(reviews)}개 리뷰 발견")
-            # 병렬로 GPT 답변 생성
-            processed_reviews = process_reviews_parallel(reviews, gpt_gen, p['name'])
-            print(f"  ✅ 파트너 '{p['name']}' 총 {len(processed_reviews)}개 리뷰 처리 완료")
-            return processed_reviews
-        else:
-            print(f"  📝 리뷰 없음")
-            return []
-    
-    # 병렬로 모든 파트너 처리
     with ThreadPoolExecutor(max_workers=len(unique_partners)) as executor:
-        futures = [executor.submit(collect_partner_reviews, p) for p in unique_partners]
-        
+        futures = [executor.submit(collect_partner, p) for p in unique_partners]
         for future in as_completed(futures):
             try:
-                partner_reviews = future.result()
-                all_reviews.extend(partner_reviews)
-            except Exception as e:
-                print(f"⚠️ 파트너 리뷰 수집 실패: {e}")
+                all_reviews.extend(future.result())
+            except:
+                pass
 
-    # 최종 중복 제거 (리뷰 ID 기준)
-    unique_all_reviews = {}
-    for review in all_reviews:
-        review_id = review.get('id')
-        if review_id and review_id not in unique_all_reviews:
-            unique_all_reviews[review_id] = review
-    
-    final_reviews = list(unique_all_reviews.values())
-    print(f"🎯 최종 중복 제거 완료: 총 {len(final_reviews)}개 리뷰")
-    
-    return final_reviews
+    # 중복 제거
+    unique = {}
+    for r in all_reviews:
+        if r.get('id') and r['id'] not in unique:
+            unique[r['id']] = r
 
-def create_dataframe(data):
-    """데이터를 DataFrame으로 변환"""
-    if not data:
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(data)
-    
-    # 필드명을 한글로 변경
-    column_mapping = {
-        'id': '리뷰ID',
-        'productTitle': '상품명',
-        'comment': '후기내용',
-        'score': '점수',
-        'reservationNo': '예약번호',
-        'username': '작성자',
-        'travelStartDate': '여행일',
-        'createdAt': '작성일',
-        'gptResponse': 'GPT답변',
-        'partner': '파트너'
-    }
-    
-    # 존재하는 컬럼만 변경
-    existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
-    df = df.rename(columns=existing_columns)
-    
-    return df
+    # 최신순 정렬
+    result = list(unique.values())
+    result.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+    return result
 
+
+# ──────────────────────────────────────────
 # 페이지 설정
+# ──────────────────────────────────────────
+
 st.set_page_config(
     page_title="마리트 긍정 리뷰 답변 생성",
     page_icon="📋",
     layout="wide"
 )
 
-# 제목
+# session_state 초기화
+if 'display_count' not in st.session_state:
+    st.session_state.display_count = 10
+if 'raw_reviews' not in st.session_state:
+    st.session_state.raw_reviews = []
+if 'processed_reviews' not in st.session_state:
+    st.session_state.processed_reviews = {}  # {review_id: gpt_text}
+
 st.title("📋 마리트 긍정 리뷰 답변 생성")
 st.markdown("---")
 
-# CSS 스타일 및 JavaScript 추가
+# CSS
 st.markdown("""
 <style>
-.copy-button {
-    background-color: #4CAF50;
-    border: none;
-    color: white;
-    padding: 8px 16px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 14px;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 4px;
-}
-.copy-button:hover {
-    background-color: #45a049;
-}
 .review-card {
     border: 1px solid #ddd;
     border-radius: 8px;
     padding: 16px;
     margin: 8px 0;
-    background-color: #f9f9f9;
 }
 .gpt-response {
     background-color: #e8f5e8;
     border-left: 4px solid #4CAF50;
-    padding: 12px 12px 12px 0;
+    padding: 12px;
     margin: 8px 0;
     border-radius: 4px;
-    text-align: left;
 }
-.gpt-response .gpt-answer-body { margin-top: 12px; }
-
+.gpt-answer-body { margin-top: 8px; }
 </style>
-
-<script>
-function copyToClipboard(textId, reviewId) {
-    const textArea = document.getElementById(textId);
-    const statusDiv = document.getElementById('status_' + textId);
-    
-    if (textArea) {
-        // 임시로 textarea를 보이게 하고 선택
-        textArea.style.display = 'block';
-        textArea.select();
-        textArea.setSelectionRange(0, 99999); // 모바일 지원
-        
-        try {
-            const successful = document.execCommand('copy');
-            if (successful) {
-                statusDiv.innerHTML = '<span style="color: green;">✅ 복사 완료! (리뷰 ID: ' + reviewId + ')</span>';
-                setTimeout(() => {
-                    statusDiv.innerHTML = '';
-                }, 3000);
-            } else {
-                statusDiv.innerHTML = '<span style="color: red;">❌ 복사 실패</span>';
-            }
-        } catch (err) {
-            statusDiv.innerHTML = '<span style="color: red;">❌ 복사 실패: ' + err + '</span>';
-        }
-        
-        // textarea 다시 숨기기
-        textArea.style.display = 'none';
-    }
-}
-</script>
 """, unsafe_allow_html=True)
 
-# 사이드바 - 설정
+
+# ──────────────────────────────────────────
+# 사이드바
+# ──────────────────────────────────────────
+
 st.sidebar.header("🔍 설정")
 
-# 계정 정보 설정 (환경변수에서 자동으로 가져오기)
-if DEFAULT_EMAIL and DEFAULT_PASSWORD:
-    # 환경변수에 계정 정보가 있으면 자동으로 사용
-    account_email = DEFAULT_EMAIL
-    account_password = DEFAULT_PASSWORD
-else:
-    # 환경변수에 없으면 기본값 설정
-    account_email = ""
-    account_password = ""
-
-
+account_email = DEFAULT_EMAIL or ""
+account_password = DEFAULT_PASSWORD or ""
 
 # GPT 프롬프트 설정
 st.sidebar.subheader("🤖 GPT 프롬프트 설정")
@@ -679,59 +446,29 @@ if prompt_type == "사용자 정의 프롬프트 사용":
         "사용자 정의 프롬프트",
         value=DEFAULT_PROMPT_TEMPLATE,
         height=400,
-        help="GPT가 리뷰에 답변할 때 사용할 프롬프트를 입력하세요. {product_title}과 {review_content}는 자동으로 치환됩니다."
+        help="{product_title}과 {review_content}는 자동으로 치환됩니다."
     )
 else:
     custom_prompt = None
 
-# 데이터 가져오기 버튼을 최상단에 배치
 st.sidebar.markdown("---")
 
-# 캐시 키 생성 (프롬프트와 계정 정보 기반)
-cache_key = f"reviews_{hash(str(custom_prompt))}_{hash(account_email)}_{hash(account_password)}"
-
+# 데이터 가져오기 버튼
 if st.sidebar.button("📊 데이터 가져오기", key="load_data", use_container_width=True, type="primary"):
-    # 필수 정보 확인
     if not account_email or not account_password:
-        st.error("❌ 이메일과 비밀번호를 입력해주세요.")
+        st.error("❌ 이메일과 비밀번호를 환경변수 또는 Secrets에 설정해주세요.")
     elif not openai.api_key:
-        st.error("❌ OpenAI API 키가 설정되지 않았습니다. 환경변수를 확인해주세요.")
+        st.error("❌ OpenAI API 키가 설정되지 않았습니다.")
     else:
-        # 캐시된 데이터가 있는지 확인
-        if 'review_cache' in st.session_state and cache_key in st.session_state.review_cache:
-            st.success("✅ 캐시된 데이터를 사용합니다.")
-            st.session_state.review_df = st.session_state.review_cache[cache_key]
+        with st.spinner("🔍 리뷰 수집 중... (GPT 없이 빠르게 가져옵니다)"):
+            raw = collect_raw_reviews(account_email, account_password)
+            st.session_state.raw_reviews = raw
+            st.session_state.processed_reviews = {}
+            st.session_state.display_count = 10
+        if raw:
+            st.success(f"✅ 총 {len(raw)}개 리뷰 수집 완료! 아래에서 10개씩 GPT 답변을 생성합니다.")
         else:
-            # 데이터 수집 및 GPT 답변 생성
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            try:
-                status_text.text("🔍 파트너 정보 조회 중...")
-                progress_bar.progress(10)
-                
-                review_data = collect_reviews_data(
-                    custom_prompt=custom_prompt,
-                    account_email=account_email,
-                    account_password=account_password
-                )
-                
-                progress_bar.progress(100)
-                status_text.text("✅ 데이터 수집 완료!")
-                
-                if review_data:
-                    # DataFrame 생성
-                    df = create_dataframe(review_data)
-                    st.session_state.review_df = df
-                    
-                    # 캐시에 저장
-                    if 'review_cache' not in st.session_state:
-                        st.session_state.review_cache = {}
-                    st.session_state.review_cache[cache_key] = df
-                else:
-                    st.error("데이터 수집에 실패했습니다. 계정 정보를 확인해주세요.")
-            except Exception as e:
-                st.error(f"데이터 수집 중 오류 발생: {e}")
+            st.error("❌ 데이터 수집에 실패했습니다. 계정 정보를 확인해주세요.")
 
 st.sidebar.markdown("---")
 
@@ -751,226 +488,170 @@ selected_scores = st.sidebar.multiselect(
     default=[5]
 )
 
-# API 키 상태 확인 (오류만 표시)
+# API 키 상태
 if openai.api_key:
-    api_status = validate_api_key()
-    if not api_status:
+    if not validate_api_key():
         st.sidebar.error("❌ OpenAI API 연결 실패")
 else:
     st.sidebar.warning("⚠️ OpenAI API 키가 설정되지 않음")
 
 
+# ──────────────────────────────────────────
+# 메인 화면
+# ──────────────────────────────────────────
 
-# 저장된 데이터가 있으면 표시
-if 'review_df' in st.session_state and not st.session_state.review_df.empty:
-    df = st.session_state.review_df
-    
+if st.session_state.raw_reviews:
+    raw = st.session_state.raw_reviews
+    gpt_gen = GPTResponseGenerator(prompt_template=custom_prompt)
+
     # 필터 적용
-    filtered_df = df.copy()
-    
-    if selected_partners:
-        filtered_df = filtered_df[filtered_df['파트너'].isin(selected_partners)]
-    
-    if selected_scores:
-        filtered_df = filtered_df[filtered_df['점수'].isin(selected_scores)]
-    
-    # 작성일시 최신 순으로 정렬
-    if '작성일' in filtered_df.columns:
-        # 작성일 컬럼을 datetime으로 변환하여 정렬
-        filtered_df['작성일_정렬용'] = pd.to_datetime(filtered_df['작성일'], errors='coerce')
-        filtered_df = filtered_df.sort_values('작성일_정렬용', ascending=False)
-        filtered_df = filtered_df.drop('작성일_정렬용', axis=1)
-    
-    # 리뷰 수 표시
-    st.metric("📊 총 리뷰 수", len(filtered_df))
-    
-    # 현재 필터 표시
+    filtered = [
+        r for r in raw
+        if r.get('partner') in selected_partners
+        and r.get('score') in selected_scores
+    ]
+
+    total = len(filtered)
+    display_count = st.session_state.display_count
+    to_show = filtered[:display_count]
+
+    st.metric("📊 총 리뷰 수", total)
+
     if selected_partners or selected_scores:
         filter_info = []
         if selected_partners:
             filter_info.append(f"파트너: {', '.join(selected_partners)}")
         if selected_scores:
             filter_info.append(f"점수: {', '.join(map(str, selected_scores))}")
-        
         st.info(" | ".join(filter_info))
-    
+
     st.markdown("---")
-    
-    # GPT 답변 카드 형태로 표시
     st.subheader("📝 GPT 답변 목록")
-    
-    if not filtered_df.empty:
-        for idx, row in filtered_df.iterrows():
-            with st.container():
-                # 파트너별 색상 설정
-                partner_name = row.get('파트너', 'N/A')
-                # GPT 답변 줄바꿈: 앞뒤·각 줄 공백 제거 후 \n → <br> (들여쓰기 제거)
-                gpt_raw = (row.get('GPT답변', 'N/A') or 'N/A').strip()
-                gpt_answer_display = '<br>'.join(line.strip() for line in gpt_raw.split('\n'))
-                if '토토부킹' in partner_name:
-                    partner_color = '#FF6B6B'  # 빨간색
-                    partner_bg_color = '#FFE6E6'
-                elif '몽키트래블' in partner_name:
-                    partner_color = '#4ECDC4'  # 청록색
-                    partner_bg_color = '#E6F7F5'
-                else:
-                    partner_color = '#95A5A6'  # 회색
-                    partner_bg_color = '#F5F5F5'
-                
-                st.markdown(f"""
-                <div class="review-card" style="border-left: 5px solid {partner_color}; background-color: {partner_bg_color};">
-                    <div style="background-color: {partner_color}; color: white; padding: 8px 12px; margin: -16px -16px 16px -16px; border-radius: 8px 8px 0 0;">
-                        <h4 style="margin: 0; color: white;">🏢 {partner_name} | 📋 리뷰 ID: {row.get('리뷰ID', 'N/A')}</h4>
-                    </div>
-                    <p><strong>점수:</strong> ⭐ {row.get('점수', 'N/A')}점</p>
-                    <p><strong>상품명:</strong> {row.get('상품명', 'N/A')}</p>
-                    <p><strong>작성자:</strong> {row.get('작성자', 'N/A')}</p>
-                    <p><strong>예약번호:</strong> {row.get('예약번호', 'N/A')} | <strong>여행일:</strong> {row.get('여행일', 'N/A')} | <strong>작성일:</strong> {row.get('작성일', 'N/A')}</p>
-                    <p><strong>후기내용:</strong> {row.get('후기내용', 'N/A')}</p>
-                    <div class="gpt-response" style="white-space: pre-wrap; text-indent: 0;">
-                        <strong>🤖 GPT 답변:</strong>
-                        <div class="gpt-answer-body">{gpt_answer_display}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # 진짜 원클릭 복사 버튼
-                gpt_text = row.get('GPT답변', '')
-                if gpt_text and gpt_text != 'N/A':
-                    # 안전하게 텍스트 이스케이프 처리
-                    safe_text = gpt_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '').replace('`', '\\`')
-                    
-                    # HTML과 JavaScript로 원클릭 복사 구현
-                    copy_html = f"""
-                    <div style="margin: 15px 0;">
-                        <button id="copyBtn_{idx}" onclick="copyText_{idx}()" 
-                                style="background: linear-gradient(45deg, {partner_color}, {partner_color}dd); 
-                                       color: white; border: none; padding: 12px 24px; 
-                                       border-radius: 8px; cursor: pointer; font-size: 14px; 
-                                       font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                                       transition: all 0.3s ease;">
-                            📋 {partner_name} 답변 복사하기 (ID: {row.get('리뷰ID', 'N/A')})
-                        </button>
-                        <div id="result_{idx}" style="margin-top: 10px; font-weight: bold;"></div>
-                    </div>
-                    
-                    <script>
-                        async function copyText_{idx}() {{
-                            const text = "{safe_text}";
-                            const btn = document.getElementById('copyBtn_{idx}');
-                            const result = document.getElementById('result_{idx}');
-                            
-                            try {{
-                                // 최신 브라우저 Clipboard API 시도
-                                if (navigator.clipboard && window.isSecureContext) {{
-                                    await navigator.clipboard.writeText(text);
-                                    result.innerHTML = '<span style="color: #4CAF50;">✅ 복사 완료! 붙여넣기(Ctrl+V)하세요</span>';
-                                    btn.style.background = 'linear-gradient(45deg, #2196F3, #1976D2)';
-                                    btn.innerHTML = '✅ 복사 완료!';
-                                }} else {{
-                                    // 폴백: 임시 텍스트 영역 생성
-                                    const textArea = document.createElement('textarea');
-                                    textArea.value = text;
-                                    textArea.style.position = 'fixed';
-                                    textArea.style.left = '-9999px';
-                                    textArea.style.top = '-9999px';
-                                    document.body.appendChild(textArea);
-                                    textArea.focus();
-                                    textArea.select();
-                                    
-                                    const successful = document.execCommand('copy');
-                                    document.body.removeChild(textArea);
-                                    
-                                    if (successful) {{
-                                        result.innerHTML = '<span style="color: #4CAF50;">✅ 복사 완료! 붙여넣기(Ctrl+V)하세요</span>';
-                                        btn.style.background = 'linear-gradient(45deg, #2196F3, #1976D2)';
-                                        btn.innerHTML = '✅ 복사 완료!';
-                                    }} else {{
-                                        throw new Error('복사 실패');
-                                    }}
-                                }}
-                                
-                                // 3초 후 원래 상태로 복원
-                                setTimeout(() => {{
-                                    result.innerHTML = '';
-                                    btn.style.background = 'linear-gradient(45deg, {partner_color}, {partner_color}dd)';
-                                    btn.innerHTML = '📋 {partner_name} 답변 복사하기 (ID: {row.get("리뷰ID", "N/A")})';
-                                }}, 3000);
-                                
-                            }} catch (err) {{
-                                result.innerHTML = '<span style="color: #f44336;">❌ 복사 실패. 브라우저가 지원하지 않습니다.</span>';
-                                console.error('복사 실패:', err);
-                                
-                                // 실패 시 텍스트 영역 표시
-                                setTimeout(() => {{
-                                    result.innerHTML = `
-                                        <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 5px;">
-                                            <p style="margin: 0 0 5px 0; font-size: 12px;">수동 복사용:</p>
-                                            <textarea style="width: 100%; height: 80px; font-family: inherit;" readonly onclick="this.select()">${{text}}</textarea>
-                                        </div>
-                                    `;
-                                }}, 1000);
-                            }}
+
+    for r in to_show:
+        review_id = r.get('id')
+        partner_name = r.get('partner', 'N/A')
+
+        # GPT 답변 없으면 생성
+        if review_id not in st.session_state.processed_reviews:
+            with st.spinner(f"🤖 GPT 답변 생성 중..."):
+                gpt_text = gpt_gen.generate_response(
+                    r.get('productTitle', ''),
+                    r.get('comment', '')
+                )
+                st.session_state.processed_reviews[review_id] = gpt_text
+
+        gpt_text = st.session_state.processed_reviews.get(review_id, '')
+
+        # 파트너 색상
+        if '토토부킹' in partner_name:
+            partner_color = '#FF6B6B'
+            partner_bg_color = '#FFE6E6'
+        elif '몽키트래블' in partner_name:
+            partner_color = '#4ECDC4'
+            partner_bg_color = '#E6F7F5'
+        else:
+            partner_color = '#95A5A6'
+            partner_bg_color = '#F5F5F5'
+
+        gpt_display = '<br>'.join(line.strip() for line in gpt_text.split('\n'))
+
+        st.markdown(f"""
+        <div class="review-card" style="border-left: 5px solid {partner_color}; background-color: {partner_bg_color};">
+            <div style="background-color: {partner_color}; color: white; padding: 8px 12px; margin: -16px -16px 16px -16px; border-radius: 8px 8px 0 0;">
+                <h4 style="margin: 0; color: white;">🏢 {partner_name} | 📋 리뷰 ID: {review_id}</h4>
+            </div>
+            <p><strong>점수:</strong> ⭐ {r.get('score', 'N/A')}점</p>
+            <p><strong>상품명:</strong> {r.get('productTitle', 'N/A')}</p>
+            <p><strong>작성자:</strong> {r.get('username', 'N/A')}</p>
+            <p><strong>예약번호:</strong> {r.get('reservationNo', 'N/A')} | <strong>여행일:</strong> {r.get('travelStartDate', 'N/A')} | <strong>작성일:</strong> {r.get('createdAt', 'N/A')}</p>
+            <p><strong>후기내용:</strong> {r.get('comment', 'N/A')}</p>
+            <div class="gpt-response">
+                <strong>🤖 GPT 답변:</strong>
+                <div class="gpt-answer-body">{gpt_display}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 복사 버튼
+        if gpt_text:
+            safe_text = gpt_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '').replace('`', '\\`')
+            copy_html = f"""
+            <div style="margin: 10px 0 20px 0;">
+                <button id="copyBtn_{review_id}" onclick="copyText_{review_id}()"
+                        style="background: linear-gradient(45deg, {partner_color}, {partner_color}cc);
+                               color: white; border: none; padding: 10px 22px;
+                               border-radius: 8px; cursor: pointer; font-size: 14px;
+                               font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                    📋 답변 복사하기 (ID: {review_id})
+                </button>
+                <span id="result_{review_id}" style="margin-left: 12px; font-weight: bold;"></span>
+            </div>
+            <script>
+                async function copyText_{review_id}() {{
+                    const text = "{safe_text}";
+                    const result = document.getElementById('result_{review_id}');
+                    try {{
+                        if (navigator.clipboard && window.isSecureContext) {{
+                            await navigator.clipboard.writeText(text);
+                        }} else {{
+                            const ta = document.createElement('textarea');
+                            ta.value = text;
+                            ta.style.position = 'fixed';
+                            ta.style.left = '-9999px';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
                         }}
-                        
-                        // 버튼 호버 효과
-                        document.getElementById('copyBtn_{idx}').addEventListener('mouseover', function() {{
-                            this.style.transform = 'translateY(-2px)';
-                            this.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
-                        }});
-                        
-                        document.getElementById('copyBtn_{idx}').addEventListener('mouseout', function() {{
-                            this.style.transform = 'translateY(0)';
-                            this.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
-                        }});
-                    </script>
-                    """
-                    
-                    # HTML 렌더링
-                    st.components.v1.html(copy_html, height=120)
-                
-                st.markdown("---")
-    
+                        result.innerHTML = '<span style="color:#4CAF50;">✅ 복사 완료!</span>';
+                        setTimeout(() => result.innerHTML = '', 3000);
+                    }} catch(e) {{
+                        result.innerHTML = '<span style="color:red;">❌ 복사 실패</span>';
+                    }}
+                }}
+            </script>
+            """
+            st.components.v1.html(copy_html, height=70)
+
+        st.markdown("---")
+
+    # 더 보기 버튼
+    if display_count < total:
+        remaining = total - display_count
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button(f"⬇️ 10개 더 보기 (남은 리뷰: {remaining}개)", use_container_width=True, type="primary"):
+                st.session_state.display_count += 10
+                st.rerun()
     else:
-        st.warning("선택된 필터에 해당하는 데이터가 없습니다.")
+        st.success("✅ 모든 리뷰를 확인했습니다!")
 
 else:
-    # 초기 화면
-    st.info("👆 왼쪽 사이드바에서 '📊 데이터 가져오기' 버튼을 클릭하여 리뷰 데이터를 생성하고 가져오세요.")
-    
-    # 사용법 안내
+    st.info("👆 왼쪽 사이드바에서 '📊 데이터 가져오기' 버튼을 클릭하여 리뷰를 불러오세요.")
     st.markdown("---")
     st.subheader("📖 사용법")
-    
     col1, col2 = st.columns(2)
-    
     with col1:
         st.markdown("""
         **1단계: 데이터 가져오기**
         - 사이드바에서 "📊 데이터 가져오기" 클릭
-        - 자동으로 데이터 생성 및 로드
-        """)
-        
-        st.markdown("""
+        - 리뷰 목록만 빠르게 수집
+
         **2단계: 필터 설정**
         - 파트너 선택 (토토부킹/몽키트래블)
         - 점수 선택 (3점/4점/5점)
         """)
-    
     with col2:
         st.markdown("""
         **3단계: GPT 답변 확인**
-        - 생성된 GPT 답변 확인
-        - 리뷰 내용과 함께 표시
-        """)
-        
-        st.markdown("""
+        - 처음 10개만 GPT 답변 자동 생성
+        - "10개 더 보기" 클릭 시 추가 생성
+
         **4단계: 답변 복사**
-        - 원하는 GPT 답변의 "📋 답변 복사하기" 버튼 클릭
-        - 자동으로 클립보드에 복사됨
-        - "✅ 복사 완료!" 확인 후 Ctrl+V로 붙여넣기
+        - "📋 답변 복사하기" 버튼 클릭
+        - Ctrl+V로 붙여넣기
         """)
 
-# 푸터
 st.markdown("---")
-st.markdown("*GPT 답변 복사 대시보드 - 통합 버전 - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "*")
+st.markdown("*GPT 답변 복사 대시보드 - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "*")
