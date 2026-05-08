@@ -460,13 +460,13 @@ if st.sidebar.button("📊 데이터 가져오기", key="load_data", use_contain
     elif not openai.api_key:
         st.error("❌ OpenAI API 키가 설정되지 않았습니다.")
     else:
-        with st.spinner("🔍 리뷰 수집 중... (GPT 없이 빠르게 가져옵니다)"):
+        with st.spinner("🔍 리뷰 수집 중..."):
             raw = collect_raw_reviews(account_email, account_password)
             st.session_state.raw_reviews = raw
             st.session_state.processed_reviews = {}
             st.session_state.display_count = 10
         if raw:
-            st.success(f"✅ 총 {len(raw)}개 리뷰 수집 완료! 아래에서 10개씩 GPT 답변을 생성합니다.")
+            st.success(f"✅ 리뷰 수집 완료! 필터를 설정하고 아래에서 확인하세요.")
         else:
             st.error("❌ 데이터 수집에 실패했습니다. 계정 정보를 확인해주세요.")
 
